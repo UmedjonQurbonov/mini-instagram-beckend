@@ -25,34 +25,36 @@ class FollowViewSet(viewsets.ViewSet):
     permission_classes = (IsAuthenticated,)
     
     @action(detail=True, methods=['post'])
-    def follow(self, request, pk=None):
-        user_to_follow = get_object_or_404(User, pk=pk)
-        
-        if request.user == user_to_follow:
-            return Response({'detail': 'You cannot follow yourself.'}, 
-                            status=status.HTTP_400_BAD_REQUEST)
-        
-        follow, created = Follow.objects.get_or_create(
+    def follow_toggle(self, request, pk=None):
+        user = get_object_or_404(User, pk=pk)
+
+        if request.user == user:
+            return Response(
+                {'detail': 'You cannot follow yourself.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        follow = Follow.objects.filter(
             follower=request.user,
-            following=user_to_follow
+            following=user
         )
-        
-        if created:
-            return Response({'detail': 'Successfully followed.'}, status=status.HTTP_201_CREATED)
-        else:
-            return Response({'detail': 'Already following.'}, status=status.HTTP_200_OK)
-    
-    @action(detail=True, methods=['post'])
-    def unfollow(self, request, pk=None):
-        user_to_unfollow = get_object_or_404(User, pk=pk)
-        
-        try:
-            follow = Follow.objects.get(follower=request.user, following=user_to_unfollow)
+
+        if follow.exists():
             follow.delete()
-            return Response({'detail': 'Successfully unfollowed.'}, status=status.HTTP_204_NO_CONTENT)
-        except Follow.DoesNotExist:
-            return Response({'detail': 'You are not following this user.'}, 
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'detail': 'Unfollowed.'},
+                status=status.HTTP_204_NO_CONTENT
+            )
+
+        Follow.objects.create(
+            follower=request.user,
+            following=user
+        )
+        return Response(
+            {'detail': 'Followed.'},
+            status=status.HTTP_201_CREATED
+        )
+    
 
 
 class FollowersListView(generics.ListAPIView):
@@ -104,6 +106,7 @@ class PostViewSet(viewsets.ModelViewSet):
     
     def list(self, request, *args, **kwargs):
         cache_key = f'posts_list_{request.GET.urlencode()}'
+        print(cache_key)
         cached_data = cache.get(cache_key)
         
         if cached_data:
@@ -147,6 +150,20 @@ class PostViewSet(viewsets.ModelViewSet):
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
         
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path=r'user/(?P<user_id>\d+)')
+    def user_posts(self, request, user_id=None):
+        user = get_object_or_404(User, pk=user_id)
+
+        queryset = Post.objects.filter(author=user, is_deleted=False).select_related('author', 'author__profile').prefetch_related('likes', 'comments')
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
     
